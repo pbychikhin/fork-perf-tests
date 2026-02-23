@@ -22,6 +22,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/klog/v2"
+	"k8s.io/perf-tests/clusterloader2/pkg/errors"
 	"k8s.io/perf-tests/clusterloader2/pkg/measurement"
 	measurementutil "k8s.io/perf-tests/clusterloader2/pkg/measurement/util"
 	"k8s.io/perf-tests/clusterloader2/pkg/util"
@@ -98,7 +99,10 @@ func (w *waitForGenericK8sObjectsMeasurement) Execute(config *measurement.Config
 		CallerName:            w.String(),
 		WaitInterval:          refreshInterval,
 	}
-	return nil, measurementutil.WaitForGenericK8sObjects(ctx, dynamicClient, options)
+	if err := measurementutil.WaitForGenericK8sObjects(ctx, dynamicClient, options); err != nil {
+		return nil, errors.NewErrCritical(err)
+	}
+	return nil, nil
 }
 
 // Dispose cleans up after the measurement.
