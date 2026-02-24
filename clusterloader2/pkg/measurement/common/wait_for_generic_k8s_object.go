@@ -84,6 +84,10 @@ func (w *waitForGenericK8sObjectsMeasurement) Execute(config *measurement.Config
 	if err != nil {
 		return nil, err
 	}
+	isFatal, err := util.GetBoolOrDefault(config.Params, "isFatal", false)
+	if err != nil {
+		return nil, err
+	}
 
 	dynamicClient := config.ClusterFramework.GetDynamicClients().GetClient()
 	ctx, cancel := context.WithTimeout(context.TODO(), timeout)
@@ -100,7 +104,10 @@ func (w *waitForGenericK8sObjectsMeasurement) Execute(config *measurement.Config
 		WaitInterval:          refreshInterval,
 	}
 	if err := measurementutil.WaitForGenericK8sObjects(ctx, dynamicClient, options); err != nil {
-		return nil, errors.NewErrCritical(err)
+		if isFatal {
+			return nil, errors.NewErrCritical(err)
+		}
+		return nil, err
 	}
 	return nil, nil
 }
