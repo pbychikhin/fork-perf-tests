@@ -186,13 +186,17 @@ func (ste *simpleExecutor) ExecuteStep(ctx Context, step *api.Step) *errors.Erro
 		klog.Warningf("Got errors during step execution: %v", allErrors)
 		if len(step.OnFailureMeasurements) > 0 {
 			klog.V(2).Infof("Step %q failed, running onFailureMeasurements", step.Name)
+			onFailureIDOffset := len(step.Measurements)
 			var failureWg wait.Group
 			for i := range step.OnFailureMeasurements {
 				m := step.OnFailureMeasurements[i]
+				substepName := fmt.Sprintf("[onFailure:%02d] - %s", i, m.Identifier)
+				substepID := onFailureIDOffset + i
 				failureWg.Start(func() {
-					if errList := measurement.Execute(ctx.GetManager(), m); !errList.IsEmpty() {
+					errList := measurement.Execute(ctx.GetManager(), m)
+					stepResults.AddSubStepResult(substepName, substepID, errList)
+					if !errList.IsEmpty() {
 						klog.Warningf("onFailureMeasurement %s - %s error: %v", m.Method, m.Identifier, errList)
-						allErrors.Concat(errList)
 					}
 				})
 			}
@@ -201,7 +205,7 @@ func (ste *simpleExecutor) ExecuteStep(ctx Context, step *api.Step) *errors.Erro
 		}
 	}
 	ctx.GetTestReporter().ReportTestStep(stepResults)
-	return allErrors
+	return stepResults.GetAllErrors()
 }
 
 // ExecutePhase executes single test phase based on provided phase configuration.
