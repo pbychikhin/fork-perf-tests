@@ -75,6 +75,11 @@ type Step struct {
 	// time will be measured and the step will be reported at the end of the test.
 	// The name is ignored if the step is of type 'Module'.
 	Name string `json:"name"`
+	// OnFailureMeasurements is a collection of measurement calls to execute
+	// when the step's main Measurements or Phases produce errors.
+	// Runs after the main work completes, before the step returns.
+	// Errors from these measurements are appended to the step's error list.
+	OnFailureMeasurements []*Measurement `json:"onFailureMeasurements"`
 }
 
 // ModuleRef is a structure that points to a Module defined in a separate file.

@@ -184,6 +184,21 @@ func (ste *simpleExecutor) ExecuteStep(ctx Context, step *api.Step) *errors.Erro
 	allErrors := stepResults.GetAllErrors()
 	if !allErrors.IsEmpty() {
 		klog.Warningf("Got errors during step execution: %v", allErrors)
+		if len(step.OnFailureMeasurements) > 0 {
+			klog.V(2).Infof("Step %q failed, running onFailureMeasurements", step.Name)
+			var failureWg wait.Group
+			for i := range step.OnFailureMeasurements {
+				m := step.OnFailureMeasurements[i]
+				failureWg.Start(func() {
+					if errList := measurement.Execute(ctx.GetManager(), m); !errList.IsEmpty() {
+						klog.Warningf("onFailureMeasurement %s - %s error: %v", m.Method, m.Identifier, errList)
+						allErrors.Concat(errList)
+					}
+				})
+			}
+			failureWg.Wait()
+			klog.V(2).Infof("Step %q onFailureMeasurements completed", step.Name)
+		}
 	}
 	ctx.GetTestReporter().ReportTestStep(stepResults)
 	return allErrors
