@@ -36,6 +36,37 @@ import (
 	"k8s.io/client-go/tools/cache"
 )
 
+// ConditionFieldMapping allows overriding the default field names used to
+// locate and interpret condition-like entries within .status.
+type ConditionFieldMapping struct {
+	// StatusPath is the field name under .status that holds the conditions
+	// array. Defaults to "conditions".
+	StatusPath string
+	// TypeField is the field name within each condition entry that serves
+	// as the condition type. Defaults to "type".
+	TypeField string
+	// StatusField is the field name within each condition entry that serves
+	// as the condition status value. Defaults to "status".
+	StatusField string
+}
+
+// DefaultConditionFieldMapping returns the mapping that matches the standard
+// metav1.Condition layout (status.conditions[].type / status).
+func DefaultConditionFieldMapping() ConditionFieldMapping {
+	return ConditionFieldMapping{
+		StatusPath:  "conditions",
+		TypeField:   "type",
+		StatusField: "status",
+	}
+}
+
+// GenericCondition is a type/status pair extracted from an object's status
+// using the configured ConditionFieldMapping.
+type GenericCondition struct {
+	Type   string
+	Status string
+}
+
 const (
 	defaultResyncInterval = 10 * time.Second
 )
@@ -43,11 +74,12 @@ const (
 // DynamicObjectStore is a convenient wrapper around cache.GenericLister.
 type DynamicObjectStore struct {
 	cache.GenericLister
-	namespaces map[string]bool
+	namespaces   map[string]bool
+	fieldMapping ConditionFieldMapping
 }
 
 // NewDynamicObjectStore creates DynamicObjectStore based on given object version resource and selector.
-func NewDynamicObjectStore(ctx context.Context, dynamicClient dynamic.Interface, gvr schema.GroupVersionResource, namespaces map[string]bool) (*DynamicObjectStore, error) {
+func NewDynamicObjectStore(ctx context.Context, dynamicClient dynamic.Interface, gvr schema.GroupVersionResource, namespaces map[string]bool, fieldMapping ConditionFieldMapping) (*DynamicObjectStore, error) {
 	informerFactory := dynamicinformer.NewDynamicSharedInformerFactory(dynamicClient, defaultResyncInterval)
 	lister := informerFactory.ForResource(gvr).Lister()
 	informerFactory.Start(ctx.Done())
@@ -56,6 +88,7 @@ func NewDynamicObjectStore(ctx context.Context, dynamicClient dynamic.Interface,
 	return &DynamicObjectStore{
 		GenericLister: lister,
 		namespaces:    namespaces,
+		fieldMapping:  fieldMapping,
 	}, nil
 }
 
@@ -68,7 +101,7 @@ func (s *DynamicObjectStore) ListObjectSimplifications() ([]ObjectSimplification
 
 	result := make([]ObjectSimplification, 0, len(objects))
 	for _, o := range objects {
-		os, err := getObjectSimplification(o)
+		os, err := getObjectSimplification(o, s.fieldMapping)
 		if err != nil {
 			return nil, err
 		}
@@ -83,32 +116,51 @@ func (s *DynamicObjectStore) ListObjectSimplifications() ([]ObjectSimplification
 // ObjectSimplification represents the content of the object
 // that is needed to be handled by this measurement.
 type ObjectSimplification struct {
-	Metadata metav1.ObjectMeta    `json:"metadata"`
-	Status   StatusWithConditions `json:"status"`
-}
-
-// StatusWithConditions represents the content of the status field
-// that is required to be handled by this measurement.
-type StatusWithConditions struct {
-	Conditions []metav1.Condition `json:"conditions"`
+	Metadata   metav1.ObjectMeta
+	Conditions []GenericCondition
 }
 
 func (o ObjectSimplification) String() string {
 	return fmt.Sprintf("%s/%s", o.Metadata.Namespace, o.Metadata.Name)
 }
 
-func getObjectSimplification(o runtime.Object) (ObjectSimplification, error) {
+func getObjectSimplification(o runtime.Object, mapping ConditionFieldMapping) (ObjectSimplification, error) {
 	dataMap, err := runtime.DefaultUnstructuredConverter.ToUnstructured(o)
 	if err != nil {
 		return ObjectSimplification{}, err
 	}
 
-	jsonBytes, err := json.Marshal(dataMap)
+	metadataJSON, err := json.Marshal(dataMap["metadata"])
 	if err != nil {
 		return ObjectSimplification{}, err
 	}
+	var metadata metav1.ObjectMeta
+	if err := json.Unmarshal(metadataJSON, &metadata); err != nil {
+		return ObjectSimplification{}, err
+	}
 
-	object := ObjectSimplification{}
-	err = json.Unmarshal(jsonBytes, &object)
-	return object, err
+	var conditions []GenericCondition
+	if statusMap, ok := dataMap["status"].(map[string]interface{}); ok {
+		if condList, ok := statusMap[mapping.StatusPath].([]interface{}); ok {
+			for _, item := range condList {
+				condMap, ok := item.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				cond := GenericCondition{}
+				if t, ok := condMap[mapping.TypeField].(string); ok {
+					cond.Type = t
+				}
+				if s, ok := condMap[mapping.StatusField].(string); ok {
+					cond.Status = s
+				}
+				conditions = append(conditions, cond)
+			}
+		}
+	}
+
+	return ObjectSimplification{
+		Metadata:   metadata,
+		Conditions: conditions,
+	}, nil
 }

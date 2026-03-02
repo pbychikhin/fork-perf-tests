@@ -88,6 +88,33 @@ func (w *waitForGenericK8sObjectsMeasurement) Execute(config *measurement.Config
 	if err != nil {
 		return nil, err
 	}
+	conditionsPath, err := util.GetStringOrDefault(config.Params, "conditionsPath", "")
+	if err != nil {
+		return nil, err
+	}
+	conditionTypeField, err := util.GetStringOrDefault(config.Params, "conditionTypeField", "")
+	if err != nil {
+		return nil, err
+	}
+	conditionStatusField, err := util.GetStringOrDefault(config.Params, "conditionStatusField", "")
+	if err != nil {
+		return nil, err
+	}
+
+	var fieldMapping measurementutil.ConditionFieldMapping
+	if conditionsPath != "" || conditionTypeField != "" || conditionStatusField != "" {
+		fm := measurementutil.DefaultConditionFieldMapping()
+		if conditionsPath != "" {
+			fm.StatusPath = conditionsPath
+		}
+		if conditionTypeField != "" {
+			fm.TypeField = conditionTypeField
+		}
+		if conditionStatusField != "" {
+			fm.StatusField = conditionStatusField
+		}
+		fieldMapping = fm
+	}
 
 	dynamicClient := config.ClusterFramework.GetDynamicClients().GetClient()
 	ctx, cancel := context.WithTimeout(context.TODO(), timeout)
@@ -102,6 +129,7 @@ func (w *waitForGenericK8sObjectsMeasurement) Execute(config *measurement.Config
 		MaxFailedObjectCount:  maxFailedObjectCount,
 		CallerName:            w.String(),
 		WaitInterval:          refreshInterval,
+		ConditionFieldMapping: fieldMapping,
 	}
 	if err := measurementutil.WaitForGenericK8sObjects(ctx, dynamicClient, options); err != nil {
 		if isFatal {

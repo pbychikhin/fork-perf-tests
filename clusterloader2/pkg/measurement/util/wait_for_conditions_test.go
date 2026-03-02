@@ -59,7 +59,7 @@ func TestWaitForGenericK8sObjects(t *testing.T) {
 				WaitInterval:          100 * time.Millisecond,
 			},
 			existingObjects: []exampleObject{
-				newExampleObject("test-1", "namespace-1", []interface{}{
+				newExampleObject("test-1", "namespace-1", "conditions", []interface{}{
 					map[string]interface{}{
 						"type":   "Successful",
 						"status": "True",
@@ -89,7 +89,7 @@ func TestWaitForGenericK8sObjects(t *testing.T) {
 				WaitInterval:          100 * time.Millisecond,
 			},
 			existingObjects: []exampleObject{
-				newExampleObject("test-1", "namespace-1", []interface{}{
+				newExampleObject("test-1", "namespace-1", "conditions", []interface{}{
 					map[string]interface{}{
 						"type":   "Successful",
 						"status": "False",
@@ -124,7 +124,7 @@ func TestWaitForGenericK8sObjects(t *testing.T) {
 				WaitInterval:          100 * time.Millisecond,
 			},
 			existingObjects: []exampleObject{
-				newExampleObject("test-1", "namespace-1", []interface{}{
+				newExampleObject("test-1", "namespace-1", "conditions", []interface{}{
 					map[string]interface{}{
 						"type":   "Successful",
 						"status": "False",
@@ -134,13 +134,13 @@ func TestWaitForGenericK8sObjects(t *testing.T) {
 						"status": "True",
 					},
 				}),
-				newExampleObject("test-2", "namespace-1", []interface{}{
+				newExampleObject("test-2", "namespace-1", "conditions", []interface{}{
 					map[string]interface{}{
 						"type":   "Successful",
 						"status": "True",
 					},
 				}),
-				newExampleObject("test-3", "namespace-1", []interface{}{
+				newExampleObject("test-3", "namespace-1", "conditions", []interface{}{
 					map[string]interface{}{
 						"type":   "Successful",
 						"status": "True",
@@ -170,7 +170,7 @@ func TestWaitForGenericK8sObjects(t *testing.T) {
 				WaitInterval:          100 * time.Millisecond,
 			},
 			existingObjects: []exampleObject{
-				newExampleObject("test-1", "namespace-1", []interface{}{
+				newExampleObject("test-1", "namespace-1", "conditions", []interface{}{
 					map[string]interface{}{
 						"type":   "Successful",
 						"status": "False",
@@ -180,10 +180,85 @@ func TestWaitForGenericK8sObjects(t *testing.T) {
 						"status": "True",
 					},
 				}),
-				newExampleObject("test-2", "namespace-1", []interface{}{
+				newExampleObject("test-2", "namespace-1", "conditions", []interface{}{
 					map[string]interface{}{
 						"type":   "Successful",
 						"status": "True",
+					},
+				}),
+			},
+			wantErr: true,
+		},
+		{
+			name:    "custom field mapping: successful featureSummary",
+			timeout: 1 * time.Second,
+			options: &WaitForGenericK8sObjectsOptions{
+				GroupVersionResource: schema.GroupVersionResource{
+					Group:    "kuberentes.io",
+					Version:  "v1alpha1",
+					Resource: "Conditions",
+				},
+				Namespaces: NamespacesRange{
+					Prefix: "namespace",
+					Min:    1,
+					Max:    1,
+				},
+				SuccessfulConditions:  []string{"Resources=Provisioned"},
+				FailedConditions:      []string{"Resources=Failed"},
+				MinDesiredObjectCount: 1,
+				MaxFailedObjectCount:  0,
+				CallerName:            "test",
+				WaitInterval:          100 * time.Millisecond,
+				ConditionFieldMapping: ConditionFieldMapping{
+					StatusPath:  "featureSummaries",
+					TypeField:   "featureID",
+					StatusField: "status",
+				},
+			},
+			existingObjects: []exampleObject{
+				newExampleObject("test-1", "namespace-1", "featureSummaries", []interface{}{
+					map[string]interface{}{
+						"featureID": "Resources",
+						"status":    "Provisioned",
+					},
+					map[string]interface{}{
+						"featureID": "Helm",
+						"status":    "Provisioned",
+					},
+				}),
+			},
+		},
+		{
+			name:    "custom field mapping: failed featureSummary",
+			timeout: 1 * time.Second,
+			options: &WaitForGenericK8sObjectsOptions{
+				GroupVersionResource: schema.GroupVersionResource{
+					Group:    "kuberentes.io",
+					Version:  "v1alpha1",
+					Resource: "Conditions",
+				},
+				Namespaces: NamespacesRange{
+					Prefix: "namespace",
+					Min:    1,
+					Max:    1,
+				},
+				SuccessfulConditions:  []string{"Resources=Provisioned"},
+				FailedConditions:      []string{"Resources=Failed"},
+				MinDesiredObjectCount: 1,
+				MaxFailedObjectCount:  0,
+				CallerName:            "test",
+				WaitInterval:          100 * time.Millisecond,
+				ConditionFieldMapping: ConditionFieldMapping{
+					StatusPath:  "featureSummaries",
+					TypeField:   "featureID",
+					StatusField: "status",
+				},
+			},
+			existingObjects: []exampleObject{
+				newExampleObject("test-1", "namespace-1", "featureSummaries", []interface{}{
+					map[string]interface{}{
+						"featureID": "Resources",
+						"status":    "Failed",
 					},
 				}),
 			},
@@ -218,7 +293,7 @@ type exampleObject struct {
 	Unstructured *unstructured.Unstructured
 }
 
-func newExampleObject(name, namespace string, conditions []interface{}) exampleObject {
+func newExampleObject(name, namespace, conditionsPath string, conditions []interface{}) exampleObject {
 	return exampleObject{
 		Namespace: namespace,
 		Unstructured: &unstructured.Unstructured{
@@ -228,7 +303,7 @@ func newExampleObject(name, namespace string, conditions []interface{}) exampleO
 					"namespace": namespace,
 				},
 				"status": map[string]interface{}{
-					"conditions": conditions,
+					conditionsPath: conditions,
 				},
 			},
 		},

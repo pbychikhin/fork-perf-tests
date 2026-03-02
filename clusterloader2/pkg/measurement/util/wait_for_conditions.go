@@ -22,7 +22,6 @@ import (
 	"strings"
 	"time"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/klog/v2"
@@ -37,8 +36,8 @@ type WaitForGenericK8sObjectsOptions struct {
 	// SuccessfulConditions lists conditions to look for in the objects denoting good objects.
 	// Formatted as `ConditionType=ConditionStatus`, e.g. `Scheduled=true`.
 	SuccessfulConditions []string
-	// SuccessfulConditions lists conditions to look for in the objects denoting good objects.
-	// Formatted as `ConditionType=ConditionStatus`, e.g. `Scheduled=true`.
+	// FailedConditions lists conditions to look for in the objects denoting bad objects.
+	// Formatted as `ConditionType=ConditionStatus`, e.g. `Failed=true`.
 	FailedConditions []string
 	// MinDesiredObjectCount describes minimum number of objects that should contain
 	// successful or failed condition.
@@ -49,6 +48,10 @@ type WaitForGenericK8sObjectsOptions struct {
 	CallerName string
 	// WaitInterval contains interval for which the function waits between refreshes.
 	WaitInterval time.Duration
+	// ConditionFieldMapping overrides the default field names used to locate
+	// and interpret condition-like entries within .status. When zero-valued,
+	// DefaultConditionFieldMapping() is used (status.conditions[].type/status).
+	ConditionFieldMapping ConditionFieldMapping
 }
 
 // NamespacesRange represents namespace range which will be queried.
@@ -88,7 +91,11 @@ func (nr *NamespacesRange) getMap() map[string]bool {
 // fulfills given conditions requirements, ctx.Done() channel is used to
 // wait for timeout.
 func WaitForGenericK8sObjects(ctx context.Context, dynamicClient dynamic.Interface, options *WaitForGenericK8sObjectsOptions) error {
-	store, err := NewDynamicObjectStore(ctx, dynamicClient, options.GroupVersionResource, options.Namespaces.getMap())
+	mapping := options.ConditionFieldMapping
+	if mapping == (ConditionFieldMapping{}) {
+		mapping = DefaultConditionFieldMapping()
+	}
+	store, err := NewDynamicObjectStore(ctx, dynamicClient, options.GroupVersionResource, options.Namespaces.getMap(), mapping)
 	if err != nil {
 		return err
 	}
@@ -136,7 +143,7 @@ func countObjectsMatchingConditions(objects []ObjectSimplification, successfulCo
 
 	count = len(objects)
 	for _, object := range objects {
-		for _, c := range object.Status.Conditions {
+		for _, c := range object.Conditions {
 			if successfulMap[conditionToKey(c)] {
 				successful = append(successful, object.String())
 				break
@@ -150,6 +157,6 @@ func countObjectsMatchingConditions(objects []ObjectSimplification, successfulCo
 	return
 }
 
-func conditionToKey(c metav1.Condition) string {
+func conditionToKey(c GenericCondition) string {
 	return fmt.Sprintf("%s=%s", c.Type, c.Status)
 }
