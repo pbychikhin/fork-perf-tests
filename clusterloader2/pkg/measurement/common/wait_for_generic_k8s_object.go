@@ -18,6 +18,7 @@ package common
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -131,7 +132,7 @@ func (w *waitForGenericK8sObjectsMeasurement) Execute(config *measurement.Config
 		FailedConditions:      failedConditions,
 		MinDesiredObjectCount: minDesiredObjectCount,
 		MaxFailedObjectCount:  maxFailedObjectCount,
-		CallerName:            w.String(),
+		CallerName:            fmt.Sprintf("%s(%s)", w.String(), config.Identifier),
 		WaitInterval:          refreshInterval,
 		ConditionFieldMapping: fieldMapping,
 		MatchAll:              matchAll,
