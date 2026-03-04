@@ -176,6 +176,9 @@ func (ste *simpleExecutor) ExecuteStep(ctx Context, step *api.Step) *errors.Erro
 		phase := step.Phases[i]
 		wg.Start(func() {
 			errList := ste.ExecutePhase(ctx, phase)
+			if phase.IsFatal && !errList.IsEmpty() {
+				errList = errors.NewErrorList(errors.NewErrCritical(errList))
+			}
 			stepResults.AddStepError(errList)
 		})
 	}

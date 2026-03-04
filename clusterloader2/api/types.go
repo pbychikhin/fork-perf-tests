@@ -122,6 +122,9 @@ type Phase struct {
 	// For every specified namespace and for every required replica,
 	// these objects will be reconciled in serial.
 	ObjectBundle []*Object `json:"objectBundle"`
+	// IsFatal indicates that errors from this phase should be treated as
+	// critical, stopping the entire test. Defaults to false.
+	IsFatal bool `json:"isFatal"`
 }
 
 // Object is a structure that defines the object managed be the tests.
