@@ -88,6 +88,10 @@ func (w *waitForGenericK8sObjectsMeasurement) Execute(config *measurement.Config
 	if err != nil {
 		return nil, err
 	}
+	matchAll, err := util.GetBoolOrDefault(config.Params, "matchAll", false)
+	if err != nil {
+		return nil, err
+	}
 	conditionsPath, err := util.GetStringOrDefault(config.Params, "conditionsPath", "")
 	if err != nil {
 		return nil, err
@@ -130,6 +134,7 @@ func (w *waitForGenericK8sObjectsMeasurement) Execute(config *measurement.Config
 		CallerName:            w.String(),
 		WaitInterval:          refreshInterval,
 		ConditionFieldMapping: fieldMapping,
+		MatchAll:              matchAll,
 	}
 	if err := measurementutil.WaitForGenericK8sObjects(ctx, dynamicClient, options); err != nil {
 		if isFatal {

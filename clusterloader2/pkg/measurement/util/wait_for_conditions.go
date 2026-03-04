@@ -52,6 +52,11 @@ type WaitForGenericK8sObjectsOptions struct {
 	// and interpret condition-like entries within .status. When zero-valued,
 	// DefaultConditionFieldMapping() is used (status.conditions[].type/status).
 	ConditionFieldMapping ConditionFieldMapping
+	// MatchAll requires ALL entries in SuccessfulConditions (and separately
+	// ALL in FailedConditions) to be present on an object for it to be
+	// counted as successful (or failed). When false (default), a single
+	// matching condition is enough.
+	MatchAll bool
 }
 
 // NamespacesRange represents namespace range which will be queried.
@@ -104,7 +109,7 @@ func WaitForGenericK8sObjects(ctx context.Context, dynamicClient dynamic.Interfa
 	if err != nil {
 		return err
 	}
-	successful, failed, count := countObjectsMatchingConditions(objects, options.SuccessfulConditions, options.FailedConditions)
+	successful, failed, count := countObjectsMatchingConditions(objects, options.SuccessfulConditions, options.FailedConditions, options.MatchAll)
 	for {
 		select {
 		case <-ctx.Done():
@@ -115,9 +120,14 @@ func WaitForGenericK8sObjects(ctx context.Context, dynamicClient dynamic.Interfa
 			if err != nil {
 				return err
 			}
-			successful, failed, count = countObjectsMatchingConditions(objects, options.SuccessfulConditions, options.FailedConditions)
+			successful, failed, count = countObjectsMatchingConditions(objects, options.SuccessfulConditions, options.FailedConditions, options.MatchAll)
 
 			klog.V(2).Infof("%s: successful=%d failed=%d count=%d", options.Summary(), len(successful), len(failed), count)
+			if klog.V(4).Enabled() {
+				for _, detail := range objectConditionDetails(objects, options.SuccessfulConditions, options.FailedConditions) {
+					klog.V(4).Infof("%s: %s", options.Summary(), detail)
+				}
+			}
 			if options.MinDesiredObjectCount <= len(successful)+len(failed) {
 				if options.MaxFailedObjectCount < len(failed) {
 					return fmt.Errorf("%s: too many failed objects, expected at most %d - currently there are: successful=%d failed=%d count=%d failed-objects=[%s]",
@@ -130,31 +140,107 @@ func WaitForGenericK8sObjects(ctx context.Context, dynamicClient dynamic.Interfa
 }
 
 // countObjectsMatchingConditions counts objects that have a successful or failed condition.
-// Function assumes the conditions it looks for are mutually exclusive.
-func countObjectsMatchingConditions(objects []ObjectSimplification, successfulConditions []string, failedConditions []string) (successful []string, failed []string, count int) {
-	successfulMap := map[string]bool{}
+// When matchAll is false (default), an object is successful/failed if ANY of its
+// conditions matches ANY entry in the respective list.
+// When matchAll is true, an object is successful only when ALL entries in
+// successfulConditions are found among its conditions. Failed conditions are
+// checked first and use ANY-match semantics regardless of matchAll.
+func countObjectsMatchingConditions(objects []ObjectSimplification, successfulConditions []string, failedConditions []string, matchAll bool) (successful []string, failed []string, count int) {
+	successfulSet := map[string]bool{}
 	for _, c := range successfulConditions {
-		successfulMap[c] = true
+		successfulSet[c] = true
 	}
-	failedMap := map[string]bool{}
+	failedSet := map[string]bool{}
 	for _, c := range failedConditions {
-		failedMap[c] = true
+		failedSet[c] = true
 	}
 
 	count = len(objects)
 	for _, object := range objects {
-		for _, c := range object.Conditions {
-			if successfulMap[conditionToKey(c)] {
-				successful = append(successful, object.String())
-				break
+		if matchAll {
+			isFailed := false
+			for _, c := range object.Conditions {
+				if failedSet[conditionToKey(c)] {
+					failed = append(failed, object.String())
+					isFailed = true
+					break
+				}
 			}
-			if failedMap[conditionToKey(c)] {
-				failed = append(failed, object.String())
-				break
+			if isFailed {
+				continue
+			}
+			present := map[string]bool{}
+			for _, c := range object.Conditions {
+				present[conditionToKey(c)] = true
+			}
+			allMatched := len(successfulConditions) > 0
+			for _, sc := range successfulConditions {
+				if !present[sc] {
+					allMatched = false
+					break
+				}
+			}
+			if allMatched {
+				successful = append(successful, object.String())
+			}
+		} else {
+			for _, c := range object.Conditions {
+				if successfulSet[conditionToKey(c)] {
+					successful = append(successful, object.String())
+					break
+				}
+				if failedSet[conditionToKey(c)] {
+					failed = append(failed, object.String())
+					break
+				}
 			}
 		}
 	}
 	return
+}
+
+// objectConditionDetails builds a per-object diagnostic showing every condition
+// found on the object and which of the wanted conditions matched or are missing.
+func objectConditionDetails(objects []ObjectSimplification, successfulConditions []string, failedConditions []string) []string {
+	successfulSet := map[string]bool{}
+	for _, c := range successfulConditions {
+		successfulSet[c] = true
+	}
+	failedSet := map[string]bool{}
+	for _, c := range failedConditions {
+		failedSet[c] = true
+	}
+
+	var details []string
+	for _, object := range objects {
+		var allKeys []string
+		var matchedSuccessful, matchedFailed []string
+		present := map[string]bool{}
+		for _, c := range object.Conditions {
+			key := conditionToKey(c)
+			allKeys = append(allKeys, key)
+			present[key] = true
+			if successfulSet[key] {
+				matchedSuccessful = append(matchedSuccessful, key)
+			}
+			if failedSet[key] {
+				matchedFailed = append(matchedFailed, key)
+			}
+		}
+		var missingSuccessful []string
+		for _, sc := range successfulConditions {
+			if !present[sc] {
+				missingSuccessful = append(missingSuccessful, sc)
+			}
+		}
+		details = append(details, fmt.Sprintf("object %s: conditions=[%s] matched-successful=[%s] matched-failed=[%s] missing-successful=[%s]",
+			object.String(),
+			strings.Join(allKeys, ", "),
+			strings.Join(matchedSuccessful, ", "),
+			strings.Join(matchedFailed, ", "),
+			strings.Join(missingSuccessful, ", ")))
+	}
+	return details
 }
 
 func conditionToKey(c GenericCondition) string {

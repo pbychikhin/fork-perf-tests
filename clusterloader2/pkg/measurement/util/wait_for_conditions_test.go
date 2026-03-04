@@ -229,6 +229,128 @@ func TestWaitForGenericK8sObjects(t *testing.T) {
 			},
 		},
 		{
+			name:    "matchAll: all conditions present",
+			timeout: 1 * time.Second,
+			options: &WaitForGenericK8sObjectsOptions{
+				GroupVersionResource: schema.GroupVersionResource{
+					Group:    "kuberentes.io",
+					Version:  "v1alpha1",
+					Resource: "Conditions",
+				},
+				Namespaces: NamespacesRange{
+					Prefix: "namespace",
+					Min:    1,
+					Max:    1,
+				},
+				SuccessfulConditions:  []string{"Resources=Provisioned", "Helm=Provisioned"},
+				FailedConditions:      []string{},
+				MinDesiredObjectCount: 1,
+				MaxFailedObjectCount:  0,
+				CallerName:            "test",
+				WaitInterval:          100 * time.Millisecond,
+				MatchAll:              true,
+				ConditionFieldMapping: ConditionFieldMapping{
+					StatusPath:  "featureSummaries",
+					TypeField:   "featureID",
+					StatusField: "status",
+				},
+			},
+			existingObjects: []exampleObject{
+				newExampleObject("test-1", "namespace-1", "featureSummaries", []interface{}{
+					map[string]interface{}{
+						"featureID": "Resources",
+						"status":    "Provisioned",
+					},
+					map[string]interface{}{
+						"featureID": "Helm",
+						"status":    "Provisioned",
+					},
+				}),
+			},
+		},
+		{
+			name:    "matchAll: partial match is not successful",
+			timeout: 1 * time.Second,
+			options: &WaitForGenericK8sObjectsOptions{
+				GroupVersionResource: schema.GroupVersionResource{
+					Group:    "kuberentes.io",
+					Version:  "v1alpha1",
+					Resource: "Conditions",
+				},
+				Namespaces: NamespacesRange{
+					Prefix: "namespace",
+					Min:    1,
+					Max:    1,
+				},
+				SuccessfulConditions:  []string{"Resources=Provisioned", "Helm=Provisioned"},
+				FailedConditions:      []string{},
+				MinDesiredObjectCount: 1,
+				MaxFailedObjectCount:  0,
+				CallerName:            "test",
+				WaitInterval:          100 * time.Millisecond,
+				MatchAll:              true,
+				ConditionFieldMapping: ConditionFieldMapping{
+					StatusPath:  "featureSummaries",
+					TypeField:   "featureID",
+					StatusField: "status",
+				},
+			},
+			existingObjects: []exampleObject{
+				newExampleObject("test-1", "namespace-1", "featureSummaries", []interface{}{
+					map[string]interface{}{
+						"featureID": "Resources",
+						"status":    "Provisioned",
+					},
+					map[string]interface{}{
+						"featureID": "Helm",
+						"status":    "Provisioning",
+					},
+				}),
+			},
+			wantErr: true,
+		},
+		{
+			name:    "matchAll: failed condition takes priority",
+			timeout: 1 * time.Second,
+			options: &WaitForGenericK8sObjectsOptions{
+				GroupVersionResource: schema.GroupVersionResource{
+					Group:    "kuberentes.io",
+					Version:  "v1alpha1",
+					Resource: "Conditions",
+				},
+				Namespaces: NamespacesRange{
+					Prefix: "namespace",
+					Min:    1,
+					Max:    1,
+				},
+				SuccessfulConditions:  []string{"Resources=Provisioned", "Helm=Provisioned"},
+				FailedConditions:      []string{"Helm=Failed"},
+				MinDesiredObjectCount: 1,
+				MaxFailedObjectCount:  0,
+				CallerName:            "test",
+				WaitInterval:          100 * time.Millisecond,
+				MatchAll:              true,
+				ConditionFieldMapping: ConditionFieldMapping{
+					StatusPath:  "featureSummaries",
+					TypeField:   "featureID",
+					StatusField: "status",
+				},
+			},
+			existingObjects: []exampleObject{
+				newExampleObject("test-1", "namespace-1", "featureSummaries", []interface{}{
+					map[string]interface{}{
+						"featureID": "Resources",
+						"status":    "Provisioned",
+					},
+					map[string]interface{}{
+						"featureID": "Helm",
+						"status":    "Failed",
+					},
+				}),
+			},
+			wantErr: true,
+		},
+		{
 			name:    "custom field mapping: failed featureSummary",
 			timeout: 1 * time.Second,
 			options: &WaitForGenericK8sObjectsOptions{
