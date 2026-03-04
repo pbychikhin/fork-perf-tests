@@ -206,6 +206,25 @@ func (ste *simpleExecutor) ExecuteStep(ctx Context, step *api.Step) *errors.Erro
 			failureWg.Wait()
 			klog.V(2).Infof("Step %q onFailureMeasurements completed", step.Name)
 		}
+		if isErrsCritical(allErrors) && len(step.OnFatalFailureMeasurements) > 0 {
+			klog.V(2).Infof("Step %q has fatal failure, running onFatalFailureMeasurements", step.Name)
+			onFatalIDOffset := len(step.Measurements) + len(step.OnFailureMeasurements)
+			var fatalWg wait.Group
+			for i := range step.OnFatalFailureMeasurements {
+				m := step.OnFatalFailureMeasurements[i]
+				substepName := fmt.Sprintf("[onFatalFailure:%02d] - %s", i, m.Identifier)
+				substepID := onFatalIDOffset + i
+				fatalWg.Start(func() {
+					errList := measurement.Execute(ctx.GetManager(), m)
+					stepResults.AddSubStepResult(substepName, substepID, errList)
+					if !errList.IsEmpty() {
+						klog.Warningf("onFatalFailureMeasurement %s - %s error: %v", m.Method, m.Identifier, errList)
+					}
+				})
+			}
+			fatalWg.Wait()
+			klog.V(2).Infof("Step %q onFatalFailureMeasurements completed", step.Name)
+		}
 	}
 	ctx.GetTestReporter().ReportTestStep(stepResults)
 	return stepResults.GetAllErrors()

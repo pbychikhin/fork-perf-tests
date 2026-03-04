@@ -80,6 +80,11 @@ type Step struct {
 	// Runs after the main work completes, before the step returns.
 	// Errors from these measurements are appended to the step's error list.
 	OnFailureMeasurements []*Measurement `json:"onFailureMeasurements"`
+	// OnFatalFailureMeasurements is a collection of measurement calls to
+	// execute when the step's errors include a critical (fatal) error.
+	// Runs after OnFailureMeasurements, before the step returns.
+	// Errors from these measurements are appended to the step's error list.
+	OnFatalFailureMeasurements []*Measurement `json:"onFatalFailureMeasurements"`
 }
 
 // ModuleRef is a structure that points to a Module defined in a separate file.
