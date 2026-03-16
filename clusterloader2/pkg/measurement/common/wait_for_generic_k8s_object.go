@@ -73,6 +73,13 @@ func (w *waitForGenericK8sObjectsMeasurement) Execute(config *measurement.Config
 	if err != nil {
 		return nil, err
 	}
+	optionalSuccessfulConditions, err := util.GetStringArray(config.Params, "optionalSuccessfulConditions")
+	if err != nil {
+		if !util.IsErrKeyNotFound(err) {
+			return nil, err
+		}
+		optionalSuccessfulConditions = nil
+	}
 	failedConditions, err := util.GetStringArray(config.Params, "failedConditions")
 	if err != nil {
 		return nil, err
@@ -126,16 +133,17 @@ func (w *waitForGenericK8sObjectsMeasurement) Execute(config *measurement.Config
 	defer cancel()
 
 	options := &measurementutil.WaitForGenericK8sObjectsOptions{
-		GroupVersionResource:  groupVersionResource,
-		Namespaces:            namespaces,
-		SuccessfulConditions:  successfulConditions,
-		FailedConditions:      failedConditions,
-		MinDesiredObjectCount: minDesiredObjectCount,
-		MaxFailedObjectCount:  maxFailedObjectCount,
-		CallerName:            fmt.Sprintf("%s(%s)", w.String(), config.Identifier),
-		WaitInterval:          refreshInterval,
-		ConditionFieldMapping: fieldMapping,
-		MatchAll:              matchAll,
+		GroupVersionResource:         groupVersionResource,
+		Namespaces:                   namespaces,
+		SuccessfulConditions:         successfulConditions,
+		OptionalSuccessfulConditions: optionalSuccessfulConditions,
+		FailedConditions:             failedConditions,
+		MinDesiredObjectCount:        minDesiredObjectCount,
+		MaxFailedObjectCount:         maxFailedObjectCount,
+		CallerName:                   fmt.Sprintf("%s(%s)", w.String(), config.Identifier),
+		WaitInterval:                 refreshInterval,
+		ConditionFieldMapping:        fieldMapping,
+		MatchAll:                     matchAll,
 	}
 	if err := measurementutil.WaitForGenericK8sObjects(ctx, dynamicClient, options); err != nil {
 		if isFatal {
