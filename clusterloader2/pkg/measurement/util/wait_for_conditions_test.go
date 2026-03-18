@@ -351,6 +351,112 @@ func TestWaitForGenericK8sObjects(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name:    "per-condition field override: matchAll with @field syntax",
+			timeout: 1 * time.Second,
+			options: &WaitForGenericK8sObjectsOptions{
+				GroupVersionResource: schema.GroupVersionResource{
+					Group:    "kuberentes.io",
+					Version:  "v1alpha1",
+					Resource: "Conditions",
+				},
+				Namespaces: NamespacesRange{
+					Prefix: "namespace",
+					Min:    1,
+					Max:    1,
+				},
+				SuccessfulConditions:  []string{"Ready=True", "ServicesInReadyState@message=3/3"},
+				FailedConditions:      []string{"Failed=True"},
+				MinDesiredObjectCount: 1,
+				MaxFailedObjectCount:  0,
+				CallerName:            "test",
+				WaitInterval:          100 * time.Millisecond,
+				MatchAll:              true,
+			},
+			existingObjects: []exampleObject{
+				newExampleObject("test-1", "namespace-1", "conditions", []interface{}{
+					map[string]interface{}{
+						"type":    "Ready",
+						"status":  "True",
+						"message": "cluster is ready",
+					},
+					map[string]interface{}{
+						"type":    "ServicesInReadyState",
+						"status":  "True",
+						"message": "3/3",
+					},
+				}),
+			},
+		},
+		{
+			name:    "per-condition field override: @field value mismatch times out",
+			timeout: 1 * time.Second,
+			options: &WaitForGenericK8sObjectsOptions{
+				GroupVersionResource: schema.GroupVersionResource{
+					Group:    "kuberentes.io",
+					Version:  "v1alpha1",
+					Resource: "Conditions",
+				},
+				Namespaces: NamespacesRange{
+					Prefix: "namespace",
+					Min:    1,
+					Max:    1,
+				},
+				SuccessfulConditions:  []string{"Ready=True", "ServicesInReadyState@message=3/3"},
+				FailedConditions:      []string{"Failed=True"},
+				MinDesiredObjectCount: 1,
+				MaxFailedObjectCount:  0,
+				CallerName:            "test",
+				WaitInterval:          100 * time.Millisecond,
+				MatchAll:              true,
+			},
+			existingObjects: []exampleObject{
+				newExampleObject("test-1", "namespace-1", "conditions", []interface{}{
+					map[string]interface{}{
+						"type":    "Ready",
+						"status":  "True",
+						"message": "cluster is ready",
+					},
+					map[string]interface{}{
+						"type":    "ServicesInReadyState",
+						"status":  "True",
+						"message": "2/3",
+					},
+				}),
+			},
+			wantErr: true,
+		},
+		{
+			name:    "per-condition field override: single condition without matchAll",
+			timeout: 1 * time.Second,
+			options: &WaitForGenericK8sObjectsOptions{
+				GroupVersionResource: schema.GroupVersionResource{
+					Group:    "kuberentes.io",
+					Version:  "v1alpha1",
+					Resource: "Conditions",
+				},
+				Namespaces: NamespacesRange{
+					Prefix: "namespace",
+					Min:    1,
+					Max:    1,
+				},
+				SuccessfulConditions:  []string{"ServicesInReadyState@message=3/3"},
+				FailedConditions:      []string{"Failed=True"},
+				MinDesiredObjectCount: 1,
+				MaxFailedObjectCount:  0,
+				CallerName:            "test",
+				WaitInterval:          100 * time.Millisecond,
+			},
+			existingObjects: []exampleObject{
+				newExampleObject("test-1", "namespace-1", "conditions", []interface{}{
+					map[string]interface{}{
+						"type":    "ServicesInReadyState",
+						"status":  "True",
+						"message": "3/3",
+					},
+				}),
+			},
+		},
+		{
 			name:    "custom field mapping: failed featureSummary",
 			timeout: 1 * time.Second,
 			options: &WaitForGenericK8sObjectsOptions{

@@ -99,6 +99,42 @@ func (nr *NamespacesRange) getMap() map[string]bool {
 	return result
 }
 
+// conditionSpec represents a parsed condition specification.
+// Condition specs support two formats:
+//   - "Type=Value"        — checks the default status field (from ConditionFieldMapping)
+//   - "Type@field=Value"  — checks the named field within the condition entry
+type conditionSpec struct {
+	condType string
+	field    string
+	value    string
+}
+
+// parseConditionSpec parses a condition specification string into its components.
+func parseConditionSpec(spec string, defaultField string) conditionSpec {
+	eqIdx := strings.Index(spec, "=")
+	if eqIdx < 0 {
+		return conditionSpec{condType: spec, field: defaultField}
+	}
+	lhs := spec[:eqIdx]
+	value := spec[eqIdx+1:]
+	if atIdx := strings.Index(lhs, "@"); atIdx >= 0 {
+		return conditionSpec{
+			condType: lhs[:atIdx],
+			field:    lhs[atIdx+1:],
+			value:    value,
+		}
+	}
+	return conditionSpec{
+		condType: lhs,
+		field:    defaultField,
+		value:    value,
+	}
+}
+
+func (cs conditionSpec) matches(c GenericCondition) bool {
+	return c.Type == cs.condType && c.Fields[cs.field] == cs.value
+}
+
 // WaitForGenericK8sObjects waits till the desired number of k8s objects
 // fulfills given conditions requirements, ctx.Done() channel is used to
 // wait for timeout.
@@ -107,6 +143,7 @@ func WaitForGenericK8sObjects(ctx context.Context, dynamicClient dynamic.Interfa
 	if mapping == (ConditionFieldMapping{}) {
 		mapping = DefaultConditionFieldMapping()
 	}
+	defaultField := mapping.StatusField
 	store, err := NewDynamicObjectStore(ctx, dynamicClient, options.GroupVersionResource, options.Namespaces.getMap(), mapping)
 	if err != nil {
 		return err
@@ -116,7 +153,7 @@ func WaitForGenericK8sObjects(ctx context.Context, dynamicClient dynamic.Interfa
 	if err != nil {
 		return err
 	}
-	successful, failed, count := countObjectsMatchingConditions(objects, options.SuccessfulConditions, options.OptionalSuccessfulConditions, options.FailedConditions, options.MatchAll)
+	successful, failed, count := countObjectsMatchingConditions(objects, options.SuccessfulConditions, options.OptionalSuccessfulConditions, options.FailedConditions, options.MatchAll, defaultField)
 	for {
 		select {
 		case <-ctx.Done():
@@ -127,11 +164,11 @@ func WaitForGenericK8sObjects(ctx context.Context, dynamicClient dynamic.Interfa
 			if err != nil {
 				return err
 			}
-			successful, failed, count = countObjectsMatchingConditions(objects, options.SuccessfulConditions, options.OptionalSuccessfulConditions, options.FailedConditions, options.MatchAll)
+			successful, failed, count = countObjectsMatchingConditions(objects, options.SuccessfulConditions, options.OptionalSuccessfulConditions, options.FailedConditions, options.MatchAll, defaultField)
 
 			klog.V(2).Infof("%s: successful=%d failed=%d count=%d", options.Summary(), len(successful), len(failed), count)
 			if klog.V(4).Enabled() {
-				for _, detail := range objectConditionDetails(objects, options.SuccessfulConditions, options.OptionalSuccessfulConditions, options.FailedConditions) {
+				for _, detail := range objectConditionDetails(objects, options.SuccessfulConditions, options.OptionalSuccessfulConditions, options.FailedConditions, defaultField) {
 					klog.V(4).Infof("%s: %s", options.Summary(), detail)
 				}
 			}
@@ -154,48 +191,54 @@ func WaitForGenericK8sObjects(ctx context.Context, dynamicClient dynamic.Interfa
 // checked first and use ANY-match semantics regardless of matchAll.
 // optionalSuccessfulConditions are checked only after the main successful
 // check passes; conditions whose Type is absent from the object are ignored.
-func countObjectsMatchingConditions(objects []ObjectSimplification, successfulConditions []string, optionalSuccessfulConditions []string, failedConditions []string, matchAll bool) (successful []string, failed []string, count int) {
-	successfulSet := map[string]bool{}
-	for _, c := range successfulConditions {
-		successfulSet[c] = true
+//
+// Condition specs support per-field overrides: "Type@field=Value" checks the
+// named field instead of the default status field.
+func countObjectsMatchingConditions(objects []ObjectSimplification, successfulConditions []string, optionalSuccessfulConditions []string, failedConditions []string, matchAll bool, defaultField string) (successful []string, failed []string, count int) {
+	parsedSuccessful := make([]conditionSpec, len(successfulConditions))
+	for i, sc := range successfulConditions {
+		parsedSuccessful[i] = parseConditionSpec(sc, defaultField)
 	}
-	failedSet := map[string]bool{}
-	for _, c := range failedConditions {
-		failedSet[c] = true
+	parsedFailed := make([]conditionSpec, len(failedConditions))
+	for i, fc := range failedConditions {
+		parsedFailed[i] = parseConditionSpec(fc, defaultField)
 	}
 
 	count = len(objects)
 	for _, object := range objects {
-		typeToKey := map[string]string{}
-		for _, c := range object.Conditions {
-			typeToKey[c.Type] = conditionToKey(c)
-		}
-
 		if matchAll {
 			isFailed := false
 			for _, c := range object.Conditions {
-				if failedSet[conditionToKey(c)] {
-					failed = append(failed, object.String())
-					isFailed = true
+				for _, spec := range parsedFailed {
+					if spec.matches(c) {
+						failed = append(failed, object.String())
+						isFailed = true
+						break
+					}
+				}
+				if isFailed {
 					break
 				}
 			}
 			if isFailed {
 				continue
 			}
-			present := map[string]bool{}
-			for _, c := range object.Conditions {
-				present[conditionToKey(c)] = true
-			}
-			allMatched := len(successfulConditions) > 0
-			for _, sc := range successfulConditions {
-				if !present[sc] {
+			allMatched := len(parsedSuccessful) > 0
+			for _, spec := range parsedSuccessful {
+				found := false
+				for _, c := range object.Conditions {
+					if spec.matches(c) {
+						found = true
+						break
+					}
+				}
+				if !found {
 					allMatched = false
 					break
 				}
 			}
 			if allMatched {
-				allMatched = checkOptionalConditions(typeToKey, optionalSuccessfulConditions, true)
+				allMatched = checkOptionalConditions(object.Conditions, optionalSuccessfulConditions, true, defaultField)
 			}
 			if allMatched {
 				successful = append(successful, object.String())
@@ -203,18 +246,30 @@ func countObjectsMatchingConditions(objects []ObjectSimplification, successfulCo
 		} else {
 			isSuccessful := false
 			for _, c := range object.Conditions {
-				key := conditionToKey(c)
-				if successfulSet[key] {
-					isSuccessful = true
+				matchedAny := false
+				for _, spec := range parsedSuccessful {
+					if spec.matches(c) {
+						isSuccessful = true
+						matchedAny = true
+						break
+					}
+				}
+				if matchedAny {
 					break
 				}
-				if failedSet[key] {
-					failed = append(failed, object.String())
+				for _, spec := range parsedFailed {
+					if spec.matches(c) {
+						failed = append(failed, object.String())
+						matchedAny = true
+						break
+					}
+				}
+				if matchedAny {
 					break
 				}
 			}
 			if isSuccessful {
-				isSuccessful = checkOptionalConditions(typeToKey, optionalSuccessfulConditions, false)
+				isSuccessful = checkOptionalConditions(object.Conditions, optionalSuccessfulConditions, false, defaultField)
 			}
 			if isSuccessful {
 				successful = append(successful, object.String())
@@ -226,51 +281,59 @@ func countObjectsMatchingConditions(objects []ObjectSimplification, successfulCo
 
 // objectConditionDetails builds a per-object diagnostic showing every condition
 // found on the object and which of the wanted conditions matched or are missing.
-func objectConditionDetails(objects []ObjectSimplification, successfulConditions []string, optionalSuccessfulConditions []string, failedConditions []string) []string {
-	successfulSet := map[string]bool{}
-	for _, c := range successfulConditions {
-		successfulSet[c] = true
-	}
-	failedSet := map[string]bool{}
-	for _, c := range failedConditions {
-		failedSet[c] = true
-	}
-
+func objectConditionDetails(objects []ObjectSimplification, successfulConditions []string, optionalSuccessfulConditions []string, failedConditions []string, defaultField string) []string {
 	var details []string
 	for _, object := range objects {
 		var allKeys []string
-		var matchedSuccessful, matchedFailed []string
-		present := map[string]bool{}
-		typeToKey := map[string]string{}
 		for _, c := range object.Conditions {
-			key := conditionToKey(c)
-			allKeys = append(allKeys, key)
-			present[key] = true
-			typeToKey[c.Type] = key
-			if successfulSet[key] {
-				matchedSuccessful = append(matchedSuccessful, key)
-			}
-			if failedSet[key] {
-				matchedFailed = append(matchedFailed, key)
-			}
+			allKeys = append(allKeys, fmt.Sprintf("%s=%s", c.Type, c.Fields[defaultField]))
 		}
+
+		var matchedSuccessful []string
 		var missingSuccessful []string
 		for _, sc := range successfulConditions {
-			if !present[sc] {
+			spec := parseConditionSpec(sc, defaultField)
+			found := false
+			for _, c := range object.Conditions {
+				if spec.matches(c) {
+					found = true
+					break
+				}
+			}
+			if found {
+				matchedSuccessful = append(matchedSuccessful, sc)
+			} else {
 				missingSuccessful = append(missingSuccessful, sc)
 			}
 		}
-		var matchedOptional, mismatchedOptional []string
-		for _, oc := range optionalSuccessfulConditions {
-			ocType := conditionKeyType(oc)
-			if existingKey, exists := typeToKey[ocType]; exists {
-				if existingKey == oc {
-					matchedOptional = append(matchedOptional, oc)
-				} else {
-					mismatchedOptional = append(mismatchedOptional, fmt.Sprintf("%s(actual=%s)", oc, existingKey))
+
+		var matchedFailed []string
+		for _, fc := range failedConditions {
+			spec := parseConditionSpec(fc, defaultField)
+			for _, c := range object.Conditions {
+				if spec.matches(c) {
+					matchedFailed = append(matchedFailed, fc)
+					break
 				}
 			}
 		}
+
+		var matchedOptional, mismatchedOptional []string
+		for _, oc := range optionalSuccessfulConditions {
+			spec := parseConditionSpec(oc, defaultField)
+			for _, c := range object.Conditions {
+				if c.Type == spec.condType {
+					if c.Fields[spec.field] == spec.value {
+						matchedOptional = append(matchedOptional, oc)
+					} else {
+						mismatchedOptional = append(mismatchedOptional,
+							fmt.Sprintf("%s(actual=%s=%s)", oc, spec.field, c.Fields[spec.field]))
+					}
+					break
+				}
+			}
+		}
+
 		details = append(details, fmt.Sprintf("object %s: conditions=[%s] matched-successful=[%s] matched-failed=[%s] missing-successful=[%s] matched-optional=[%s] mismatched-optional=[%s]",
 			object.String(),
 			strings.Join(allKeys, ", "),
@@ -283,31 +346,23 @@ func objectConditionDetails(objects []ObjectSimplification, successfulConditions
 	return details
 }
 
-func conditionToKey(c GenericCondition) string {
-	return fmt.Sprintf("%s=%s", c.Type, c.Status)
-}
-
-// conditionKeyType extracts the Type portion from a "Type=Status" key.
-func conditionKeyType(key string) string {
-	if idx := strings.Index(key, "="); idx >= 0 {
-		return key[:idx]
-	}
-	return key
-}
-
 // checkOptionalConditions validates optional conditions against the object's
 // actual conditions. Only conditions whose Type is present on the object are
 // considered. When matchAll is true every present optional condition must
 // match; when false at least one present must match (or none are present).
-func checkOptionalConditions(typeToKey map[string]string, optionalConditions []string, matchAll bool) bool {
+func checkOptionalConditions(conditions []GenericCondition, optionalConditions []string, matchAll bool, defaultField string) bool {
 	if len(optionalConditions) == 0 {
 		return true
 	}
 	if matchAll {
 		for _, oc := range optionalConditions {
-			if existingKey, exists := typeToKey[conditionKeyType(oc)]; exists {
-				if existingKey != oc {
-					return false
+			spec := parseConditionSpec(oc, defaultField)
+			for _, c := range conditions {
+				if c.Type == spec.condType {
+					if c.Fields[spec.field] != spec.value {
+						return false
+					}
+					break
 				}
 			}
 		}
@@ -317,10 +372,14 @@ func checkOptionalConditions(typeToKey map[string]string, optionalConditions []s
 	// If none are present on the object the check passes vacuously.
 	anyPresent := false
 	for _, oc := range optionalConditions {
-		if existingKey, exists := typeToKey[conditionKeyType(oc)]; exists {
-			anyPresent = true
-			if existingKey == oc {
-				return true
+		spec := parseConditionSpec(oc, defaultField)
+		for _, c := range conditions {
+			if c.Type == spec.condType {
+				anyPresent = true
+				if c.Fields[spec.field] == spec.value {
+					return true
+				}
+				break
 			}
 		}
 	}

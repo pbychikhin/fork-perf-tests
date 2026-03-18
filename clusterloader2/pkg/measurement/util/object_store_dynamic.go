@@ -61,10 +61,14 @@ func DefaultConditionFieldMapping() ConditionFieldMapping {
 }
 
 // GenericCondition is a type/status pair extracted from an object's status
-// using the configured ConditionFieldMapping.
+// using the configured ConditionFieldMapping. Fields contains every string
+// field from the raw condition entry, keyed by field name, so that
+// per-condition field overrides (Type@field=Value syntax) can look up
+// arbitrary fields.
 type GenericCondition struct {
 	Type   string
 	Status string
+	Fields map[string]string
 }
 
 const (
@@ -147,12 +151,19 @@ func getObjectSimplification(o runtime.Object, mapping ConditionFieldMapping) (O
 				if !ok {
 					continue
 				}
-				cond := GenericCondition{}
+				cond := GenericCondition{
+					Fields: make(map[string]string),
+				}
 				if t, ok := condMap[mapping.TypeField].(string); ok {
 					cond.Type = t
 				}
 				if s, ok := condMap[mapping.StatusField].(string); ok {
 					cond.Status = s
+				}
+				for k, v := range condMap {
+					if s, ok := v.(string); ok {
+						cond.Fields[k] = s
+					}
 				}
 				conditions = append(conditions, cond)
 			}
